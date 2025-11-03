@@ -1,0 +1,399 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+/* Loading animation for analysis overlay */
+@keyframes dropAndShift {
+  0% {
+    transform: translate(0px, 15px);
+  }
+  16.67% {
+    transform: translate(80px, 13px);
+  }
+  33.34% {
+    transform: translate(40px, 10px);
+  }
+  50.01% {
+    transform: translate(40px, -30px);
+  }
+  66.68% {
+    transform: translate(40px, 55px);
+  }
+  83.35% {
+    transform: translate(40px, 10px);
+  }
+  100% {
+    transform: translate(0px, 15px);
+  }
+}
+
+@keyframes bubbleGlint {
+  0% {
+    top: 3px;
+    left: 4px;
+    opacity: 0;
+  }
+  8.335% {
+    top: 6px;
+    left: 6px;
+    opacity: 0.5;
+  }
+  16.67% {
+    top: 3px;
+    left: 4px;
+    opacity: 0;
+  }
+  33.34% {
+    top: 3px;
+    left: 4px;
+    opacity: 0.5;
+  }
+  50.01% {
+    top: 3px;
+    left: 4px;
+    opacity: 0;
+  }
+  58.345% {
+    top: 6px;
+    left: 6px;
+    opacity: 0.5;
+  }
+  66.68% {
+    top: 3px;
+    left: 4px;
+    opacity: 0;
+  }
+  83.35% {
+    top: 6px;
+    left: 6px;
+    opacity: 0.5;
+  }
+  100% {
+    top: 3px;
+    left: 4px;
+    opacity: 0;
+  }
+}
+
+.Strich1 {
+  position: absolute;
+  width: 130px;
+  height: 50px;
+  background: #000;
+  border-radius: 25px;
+  transform: rotate(45deg);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  z-index: 0;
+}
+
+.Strich2 {
+  position: absolute;
+  width: 130px;
+  height: 50px;
+  background: #000;
+  border-radius: 25px;
+  transform: rotate(-90deg);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  z-index: 0;
+}
+
+.bubble {
+  position: absolute;
+  top: 0;
+  left: 15px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #ffb3c1, #e64980, #ff8787);
+  animation: dropAndShift 5s ease-in-out infinite;
+  z-index: 1;
+}
+
+.bubble1 {
+  position: absolute;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle at 30% 30%, #edb3ff, #ac49e6, #fb87ff);
+  border-radius: 50%;
+  left: 8px;
+  animation: dropAndShift 6s ease-in-out infinite;
+  z-index: 2;
+}
+
+.bubble2 {
+  position: absolute;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle at 30% 30%, #b3d8ff, #4963e6, #87a7ff);
+  border-radius: 50%;
+  left: 12px;
+  animation: dropAndShift 4s ease-in-out infinite;
+  z-index: 3;
+}
+
+.bubble3 {
+  position: absolute;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle at 30% 30%, #b3ffbc, #35a32f, #75ba61);
+  border-radius: 50%;
+  left: 10px;
+  animation: dropAndShift 7s ease-in-out infinite;
+  z-index: 4;
+}
+
+.bubble4 {
+  position: absolute;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  background: radial-gradient(circle at 30% 30%, #ffd9b3, #e67e22, #ffb774);
+  border-radius: 50%;
+  left: 18px;
+  animation: dropAndShift 5.5s ease-in-out infinite;
+  z-index: 5;
+}
+
+/* Container helper for the loader to center in viewer */
+.analyze-loader {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 50;
+}
+
+.analyze-blur {
+  filter: blur(4px);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Medical AI Design System - Professional & Clean */
+
+/* CSS Variables */
+:root {
+    /* Core Background & Text */
+    --background: 210 20% 98%;
+    --foreground: 215 25% 15%;
+
+    /* Card & Surface Colors */
+    --card: 0 0% 100%;
+    --card-foreground: 215 25% 15%;
+
+    /* Popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 25% 15%;
+
+    /* Medical Blue Primary Theme */
+    --primary: 195 100% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 195 100% 65%;
+
+    /* Subtle Secondary */
+    --secondary: 210 15% 96%;
+    --secondary-foreground: 215 25% 25%;
+
+    /* Muted Elements */
+    --muted: 210 15% 95%;
+    --muted-foreground: 215 15% 45%;
+
+    /* Accent - Medical Teal */
+    --accent: 175 85% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Status Colors */
+    --destructive: 0 85% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 145 85% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 45 95% 55%;
+    --warning-foreground: 215 25% 15%;
+
+    /* Borders & Inputs */
+    --border: 215 20% 90%;
+    --input: 215 20% 92%;
+    --ring: 195 100% 45%;
+
+    /* Medical UI Specific */
+    --viewer-background: 215 15% 5%;
+  --overlay-segmentation: 145 85% 55%;
+    
+  /* Glass Effect Variables */
+  --glass-background: 210 20% 98%;
+  --glass-alpha: 0.8;
+    --glass-border: 215 20% 90% / 0.3;
+    --glass-backdrop-blur: 12px;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-accent: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--primary)));
+    --gradient-glass: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+
+    /* Shadows */
+    --shadow-medical: 0 8px 32px hsl(var(--primary) / 0.1);
+    --shadow-glass: 0 8px 32px rgba(0,0,0,0.1);
+    --shadow-viewer: inset 0 0 0 1px hsl(var(--border)), 0 4px 12px rgba(0,0,0,0.15);
+
+    /* Animation Variables */
+    --transition-medical: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-glass: all 0.2s ease-out;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+}
+
+.dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    background-image: linear-gradient(135deg, hsl(var(--background)), hsl(var(--muted)));
+  }
+}
+
+@layer components {
+  /* Glass Effect Components */
+  .glass-panel {
+    background: hsl(var(--glass-background) / var(--glass-alpha));
+    backdrop-filter: blur(var(--glass-backdrop-blur));
+    border: 1px solid hsl(var(--glass-border));
+    transition: var(--transition-glass);
+  }
+
+  .glass-panel:hover {
+    background: hsl(var(--card));
+    border-color: hsl(var(--border));
+  }
+
+  /* Medical Viewer Styles */
+  .medical-viewer {
+    background: hsl(var(--viewer-background));
+    box-shadow: var(--shadow-viewer);
+    border-radius: var(--radius);
+  }
+
+  /* Overlay Styles */
+  .overlay-segmentation {
+    background-color: hsl(var(--overlay-segmentation) / 0.3);
+    border: 2px solid hsl(var(--overlay-segmentation));
+  }
+
+  /* Grad-CAM and Uncertainty overlays removed for segmentation-only mode */
+
+  /* Custom Animations */
+  .pulse-medical {
+    animation: pulse-medical 2s infinite;
+  }
+
+  @keyframes pulse-medical {
+    0%, 100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.8;
+      transform: scale(1.02);
+    }
+  }
+
+  .gradient-border {
+    border-image: var(--gradient-primary) 1;
+  }
+
+  /* File Upload Drag Zone */
+  .upload-zone {
+    transition: var(--transition-medical);
+    border: 2px dashed hsl(var(--border));
+  }
+
+  .upload-zone.drag-over {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.05);
+    transform: scale(1.02);
+  }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.5);
+    border-radius: 3px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+  }
+}
