@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">NeuroInsight Icon</title>
+  <desc id="desc">Stylized brain glyph used as the NeuroInsight favicon.</desc>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2E3A8C" />
+      <stop offset="50%" stop-color="#5A6DE8" />
+      <stop offset="100%" stop-color="#7AE5D9" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="#0F172A" />
+  <path fill="url(#g)" d="M32 12c-9.94 0-18 8.06-18 18 0 6.24 3.18 11.74 8 15v4c0 1.1.9 2 2 2h4v-6c0-1.1-.9-2-2-2h-2a12 12 0 0 1-6-10c0-6.63 5.37-12 12-12s12 5.37 12 12a12 12 0 0 1-6 10h-2c-1.1 0-2 .9-2 2v6h4c1.1 0 2-.9 2-2v-4c4.82-3.26 8-8.76 8-15 0-9.94-8.06-18-18-18z" />
+  <circle cx="24" cy="30" r="3" fill="#F8FAFC" />
+  <circle cx="40" cy="30" r="3" fill="#F8FAFC" />
+  <path d="M24 43c2.67 2 13.33 2 16 0" stroke="#F8FAFC" stroke-width="2.5" stroke-linecap="round" fill="none" />
+</svg>

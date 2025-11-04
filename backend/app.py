@@ -5,6 +5,7 @@ import os
 import threading
 import uuid
 import base64
+import time
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -62,6 +63,8 @@ class InferenceResponse(BaseModel):
     seg_npz: str
     # Grad-CAM heatmap (if enabled)
     gradcam_npz: Optional[str] = None
+    # Additional auxiliary maps (confidence, uncertainty, etc.)
+    aux_npz: Optional[str] = None
     # Metadata for client rendering (use Any for flexible structure)
     meta: Dict[str, Any]
 
@@ -246,7 +249,8 @@ if TORCH_AVAILABLE:
                 raise RuntimeError("Failed to load PyTorch model: " + "; ".join(load_errs))
             self.model: nn.Module = model.to(self.device)
             self.model.eval()
-            # Initialize Medical Grad-CAM for explainability with multiple decoder layers
+            # Initialize Medical Grad-CAM for explainability with correct decoder layers
+            # Based on available layers: u3.conv2, u4.conv2 are the correct decoder conv layers
             self.gradcam = MedicalGradCAM(self.model, target_layers=['u3.conv2', 'u4.conv2'])
             # Pre-warm with a dummy patch to stabilize kernels
             with torch.no_grad():
@@ -313,7 +317,7 @@ class MedicalGradCAM:
         self.model = model
         # Use multiple layers from the decoder path for better localization
         if target_layers is None:
-            target_layers = ['u3.conv2', 'u4.conv2']  # Use actual decoder conv layers
+            target_layers = ['u3.conv2', 'u4.conv2']  # Correct decoder conv layers from model architecture
         self.target_layers = target_layers
         self.layer_gradients = {}
         self.layer_activations = {}
@@ -582,6 +586,7 @@ def get_runtime(prefer: str = "torch") -> Union['TorchRuntime', OnnxRuntime]:
 PATCH = (64, 64, 64)  # D, H, W
 STRIDE = (48, 48, 48)  # overlap 16 voxels per axis
 BLEND_WINDOW: Optional[np.ndarray] = None  # [1,1,pD,pH,pW] blend weights cached
+CLASS_NAME_MAP = {1: "necrotic", 2: "edema", 3: "enhancing"}
 
 def zyx_shape(arr: np.ndarray) -> Tuple[int, int, int]:
     assert arr.ndim == 3, f"Expected 3D, got {arr.shape}"
@@ -714,18 +719,21 @@ def _resample_if_needed(vols: Dict[str, np.ndarray], mask: Optional[np.ndarray],
 
 
 def infer_volume(stacked: np.ndarray, runtime: Union['TorchRuntime', OnnxRuntime]) -> np.ndarray:
-    # stacked: [C, D, H, W]
+    seg, _ = infer_volume_with_logits(stacked, runtime)
+    return seg
+
+
+def infer_volume_with_logits(stacked: np.ndarray, runtime: Union['TorchRuntime', OnnxRuntime]) -> Tuple[np.ndarray, np.ndarray]:
+    """Run sliding-window inference returning both segmentation and averaged logits."""
     C, D, H, W = stacked.shape
     pD, pH, pW = PATCH
-    # Probe for class channels
     probe = np.zeros((1, C, pD, pH, pW), dtype=np.float32)
-    
-    # Handle unified method for TorchRuntime
+
     if isinstance(runtime, TorchRuntime):
         out = runtime.infer(probe, enable_gradcam=False)
     else:
         out = runtime.infer(probe)
-        
+
     if out.ndim != 5:
         raise HTTPException(status_code=500, detail=f"Unexpected model output shape {out.shape}, expected [1, K, d, h, w]")
     K = out.shape[1]
@@ -739,24 +747,134 @@ def infer_volume(stacked: np.ndarray, runtime: Union['TorchRuntime', OnnxRuntime
         pad_y = pH - patch.shape[2]
         pad_x = pW - patch.shape[3]
         if pad_z > 0 or pad_y > 0 or pad_x > 0:
-            patch = np.pad(patch, ((0,0),(0,pad_z),(0,pad_y),(0,pad_x)), mode='constant')
+            patch = np.pad(patch, ((0, 0), (0, pad_z), (0, pad_y), (0, pad_x)), mode='constant')
         patch_b = patch[None, ...].astype(np.float32)
-        
-        # Use unified method for TorchRuntime, standard method for OnnxRuntime  
+
         if isinstance(runtime, TorchRuntime):
-            logits = runtime.infer(patch_b, enable_gradcam=False)[0]
+            logits_patch = runtime.infer(patch_b, enable_gradcam=False)[0]
         else:
-            logits = runtime.infer(patch_b)[0]
-            
-        logits = logits[:, :min(pD, D - z), :min(pH, H - y), :min(pW, W - x)]
-        stitch_logits(logits_sum, weights_sum, logits, z, y, x)
+            logits_patch = runtime.infer(patch_b)[0]
+
+        actual_z = min(pD, D - z)
+        actual_y = min(pH, H - y)
+        actual_x = min(pW, W - x)
+        logits_patch = logits_patch[:, :actual_z, :actual_y, :actual_x]
+        stitch_logits(logits_sum, weights_sum, logits_patch, z, y, x)
 
     weights_sum = np.clip(weights_sum, 1e-6, None)
     logits_avg = logits_sum / weights_sum[None, ...]
-
-    # Argmax segmentation
     seg = np.argmax(logits_avg, axis=0).astype(np.int16)
-    return seg
+    return seg, logits_avg
+
+
+def logits_to_probabilities(logits: np.ndarray) -> np.ndarray:
+    """Convert logits [K,D,H,W] to softmax probabilities with numerical stability."""
+    max_logits = logits.max(axis=0, keepdims=True)
+    exp_logits = np.exp(logits - max_logits)
+    sum_exp = np.clip(exp_logits.sum(axis=0, keepdims=True), 1e-8, None)
+    probs = exp_logits / sum_exp
+    return probs.astype(np.float32)
+
+
+def compute_entropy(probs: np.ndarray) -> np.ndarray:
+    clipped = np.clip(probs, 1e-8, 1.0)
+    entropy = -np.sum(clipped * np.log(clipped), axis=0)
+    return entropy.astype(np.float32)
+
+
+def _compute_axis_bounds(center: int, size: int, limit: int) -> Tuple[int, int, int, int]:
+    """Return (start, end, pad_before, pad_after) for extracting a patch along one axis."""
+    half = size // 2
+    start = center - half
+    end = start + size
+    pad_before = 0
+    pad_after = 0
+    if start < 0:
+        pad_before = -start
+        start = 0
+    if end > limit:
+        pad_after = end - limit
+        end = limit
+    return start, end, pad_before, pad_after
+
+
+def generate_roi_gradcam(
+    stacked: np.ndarray,
+    runtime: 'TorchRuntime',
+    center_voxel: Tuple[int, int, int],
+    target_class: int,
+) -> Tuple[np.ndarray, Optional[Dict[str, Any]]]:
+    """Run Grad-CAM on a single ROI centered at the specified voxel."""
+    C, D, H, W = stacked.shape
+    pD, pH, pW = PATCH
+    class_name = CLASS_NAME_MAP.get(target_class)
+    if class_name is None:
+        return np.zeros((D, H, W), dtype=np.float32), None
+
+    zc, yc, xc = center_voxel
+    sz, ez, pad_before_z, pad_after_z = _compute_axis_bounds(zc, pD, D)
+    sy, ey, pad_before_y, pad_after_y = _compute_axis_bounds(yc, pH, H)
+    sx, ex, pad_before_x, pad_after_x = _compute_axis_bounds(xc, pW, W)
+
+    roi = stacked[:, sz:ez, sy:ey, sx:ex]
+    pad_config = (
+        (0, 0),
+        (pad_before_z, pad_after_z),
+        (pad_before_y, pad_after_y),
+        (pad_before_x, pad_after_x),
+    )
+    if any(p > 0 for pads in pad_config for p in pads):
+        roi_padded = np.pad(roi, pad_config, mode='constant')
+    else:
+        roi_padded = roi
+
+    roi_batch = roi_padded[None, ...].astype(np.float32)
+
+    try:
+        logits_patch, heatmaps = runtime.infer(roi_batch, enable_gradcam=True)
+        heatmap = heatmaps.get(class_name)
+        if heatmap is None:
+            raise RuntimeError(f"Grad-CAM heatmap missing for class '{class_name}'")
+    except Exception as exc:
+        return np.zeros((D, H, W), dtype=np.float32), {
+            "class": int(target_class),
+            "class_name": class_name,
+            "center_voxel": [int(zc), int(yc), int(xc)],
+            "error": str(exc),
+        }
+
+    heatmap = np.asarray(heatmap, dtype=np.float32)
+
+    def _crop(axis_pad_before: int, axis_pad_after: int, size: int) -> slice:
+        start = axis_pad_before
+        end = size - axis_pad_after if axis_pad_after > 0 else size
+        return slice(start, end)
+
+    cropped = heatmap[
+        _crop(pad_before_z, pad_after_z, pD),
+        _crop(pad_before_y, pad_after_y, pH),
+        _crop(pad_before_x, pad_after_x, pW),
+    ]
+
+    volume = np.zeros((D, H, W), dtype=np.float32)
+    volume[sz:ez, sy:ey, sx:ex] = cropped[: ez - sz, : ey - sy, : ex - sx]
+
+    roi_meta = {
+        "class": int(target_class),
+        "class_name": class_name,
+        "center_voxel": [int(zc), int(yc), int(xc)],
+        "patch_start": [int(sz), int(sy), int(sx)],
+        "patch_end": [int(ez), int(ey), int(ex)],
+        "patch_size": list(PATCH),
+        "actual_size": [int(ez - sz), int(ey - sy), int(ex - sx)],
+        "padding": {
+            "z": [int(pad_before_z), int(pad_after_z)],
+            "y": [int(pad_before_y), int(pad_after_y)],
+            "x": [int(pad_before_x), int(pad_after_x)],
+        },
+    }
+
+    return volume, roi_meta
 
 
 def infer_volume_with_gradcam(stacked: np.ndarray, runtime: 'TorchRuntime') -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
@@ -909,47 +1027,103 @@ def infer_endpoint(req: InferenceRequest):
 
     # Check if Grad-CAM is requested
     if req.enable_gradcam:
-        # Grad-CAM inference requires PyTorch runtime
         runtime = get_runtime(prefer="torch")
         if not isinstance(runtime, TorchRuntime):
             raise HTTPException(status_code=400, detail="Grad-CAM explainability requires PyTorch runtime")
-        
-        # Perform inference with Grad-CAM
-        seg, gradcam_heatmaps = infer_volume_with_gradcam(stacked, runtime)
-        
-        # Prepare segmentation NPZ
+
+        total_start = time.perf_counter()
+        seg_start = time.perf_counter()
+        seg, logits_avg = infer_volume_with_logits(stacked, runtime)
+        seg_ms = (time.perf_counter() - seg_start) * 1e3
+
+        probs = logits_to_probabilities(logits_avg)
+        confidence_map = probs.max(axis=0)
+        uncertainty_map = (1.0 - confidence_map).astype(np.float32)
+        entropy_map = compute_entropy(probs)
+
+        gradcam_volume = np.zeros_like(confidence_map, dtype=np.float32)
+        roi_meta: Optional[Dict[str, Any]] = None
+        gradcam_ms = 0.0
+
+        tumor_mask = seg > 0
+        if np.any(tumor_mask):
+            priority = confidence_map * tumor_mask
+            best_idx = int(np.argmax(priority))
+            best_value = float(priority.flat[best_idx])
+            if best_value > 0:
+                center_voxel = np.unravel_index(best_idx, seg.shape)
+                target_class = int(seg[center_voxel])
+                grad_start = time.perf_counter()
+                gradcam_volume, roi_meta = generate_roi_gradcam(stacked, runtime, center_voxel, target_class)
+                gradcam_ms = (time.perf_counter() - grad_start) * 1e3
+                if roi_meta is not None:
+                    roi_meta["confidence"] = float(confidence_map[center_voxel])
+                    roi_meta["priority_value"] = best_value
+                    if 0 <= target_class < probs.shape[0]:
+                        roi_meta["class_probability"] = float(probs[target_class, center_voxel[0], center_voxel[1], center_voxel[2]])
+            else:
+                roi_meta = None
+
+        total_ms = (time.perf_counter() - total_start) * 1e3
+
         seg_npz = _to_npz_b64({'seg': seg.astype(np.int16)})
-        
-        # Prepare Grad-CAM NPZ with ROI heatmaps (add debugging)
-        gradcam_data = {}
-        for class_name, heatmap in gradcam_heatmaps.items():
-            heatmap_float32 = heatmap.astype(np.float32)
-            gradcam_data[f'gradcam_{class_name}'] = heatmap_float32
-            print(f"Encoding {class_name} heatmap: shape={heatmap_float32.shape}, "
-                  f"range=[{heatmap_float32.min():.6f}, {heatmap_float32.max():.6f}], "
-                  f"dtype={heatmap_float32.dtype}, non_zero_count={np.count_nonzero(heatmap_float32)}")
-        
-        gradcam_npz = _to_npz_b64(gradcam_data)
-        
+        aux_npz = _to_npz_b64({
+            'confidence_map': confidence_map.astype(np.float32),
+            'uncertainty_map': uncertainty_map,
+            'entropy_map': entropy_map,
+        })
+
+        gradcam_npz = None
+        gradcam_shape: Optional[Tuple[int, int, int]] = None
+        if roi_meta is not None and 'error' not in roi_meta:
+            gradcam_npz = _to_npz_b64({'gradcam_focus': gradcam_volume.astype(np.float32)})
+            gradcam_shape = gradcam_volume.shape
+
         uniq = sorted([int(x) for x in np.unique(seg)])
-        meta = {
+        meta: Dict[str, Any] = {
             "labels": {"0": "background", "1": "edema", "2": "necrotic_core", "3": "enhancing"},
             "unique_labels": uniq,
             "shape": (int(seg.shape[0]), int(seg.shape[1]), int(seg.shape[2])),
             "output_shapes": {
                 "seg": (int(seg.shape[0]), int(seg.shape[1]), int(seg.shape[2])),
-                "gradcam_necrotic": (int(seg.shape[0]), int(seg.shape[1]), int(seg.shape[2])),
-                "gradcam_edema": (int(seg.shape[0]), int(seg.shape[1]), int(seg.shape[2])),
-                "gradcam_enhancing": (int(seg.shape[0]), int(seg.shape[1]), int(seg.shape[2])),
             },
             "channel_order": ["T1", "T1ce", "T2", "FLAIR"],
-            "gradcam_classes": ["necrotic", "edema", "enhancing"],
             "explainability_mode": True,
+            "timings_ms": {
+                "segmentation": round(seg_ms, 2),
+                "gradcam": round(gradcam_ms, 2),
+                "total": round(total_ms, 2),
+            },
+            "uncertainty_maps": {
+                "confidence_map": list(confidence_map.shape),
+                "uncertainty_map": list(uncertainty_map.shape),
+                "entropy_map": list(entropy_map.shape),
+            },
+            "confidence_stats": {
+                "min": float(confidence_map.min()),
+                "max": float(confidence_map.max()),
+                "mean": float(confidence_map.mean()),
+            },
+            "gradcam_available": bool(roi_meta and 'error' not in roi_meta),
         }
-        
+
+        if roi_meta is not None:
+            meta["gradcam_roi"] = roi_meta
+            if 'error' not in roi_meta:
+                meta.setdefault("gradcam_classes", [])
+                class_name = roi_meta.get("class_name")
+                if class_name and class_name not in meta["gradcam_classes"]:
+                    meta["gradcam_classes"].append(class_name)
+        else:
+            meta["gradcam_classes"] = []
+
+        if gradcam_shape is not None:
+            meta["output_shapes"]["gradcam_focus"] = [int(v) for v in gradcam_shape]
+
         return InferenceResponse(
             seg_npz=seg_npz,
             gradcam_npz=gradcam_npz,
+            aux_npz=aux_npz,
             meta=meta,
         )
     else:

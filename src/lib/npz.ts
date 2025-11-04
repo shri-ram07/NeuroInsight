@@ -69,14 +69,24 @@ function dtypeToTypedArray(buf: ArrayBuffer, dtype: string): Int16Array | Float3
   }
 }
 
-export async function decodeNpzTo3DArray(b64: string, key: string): Promise<number[][][]> {
+export interface DecodeNpzOptions {
+  quietMissing?: boolean;
+}
+
+export async function decodeNpzTo3DArray(
+  b64: string,
+  key: string,
+  options?: DecodeNpzOptions,
+): Promise<number[][][]> {
   const ab = await decodeBase64ToArrayBuffer(b64);
   const zip = await JSZip.loadAsync(ab);
   // Find .npy entry for the specific key
   const expectedNpyFile = `${key}.npy`;
   const entry = Object.keys(zip.files).find((k) => k === expectedNpyFile);
   if (!entry) {
-    console.error(`NPZ key '${key}' not found. Available keys:`, Object.keys(zip.files));
+    if (!options?.quietMissing) {
+      console.error(`NPZ key '${key}' not found. Available keys:`, Object.keys(zip.files));
+    }
     throw new Error(`NPZ key '${key}' not found`);
   }
   const npyBuf = await zip.files[entry].async('arraybuffer');

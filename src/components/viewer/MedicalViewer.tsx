@@ -21,6 +21,9 @@ interface MedicalViewerProps {
   gradcamHeatmaps?: { [className: string]: number[][][] } | null;
   showGradcam?: boolean;
   gradcamOpacity?: number[];
+  uncertaintyMap?: number[][][] | null;
+  showUncertainty?: boolean;
+  uncertaintyOpacity?: number[];
   // labels/meta for legend
   labelNames?: Record<string, string>;
   presentLabels?: number[];
@@ -72,6 +75,7 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
   const { modality = "T1", modalityImages = {}, setModalityImages } = props;
   const { segmentation, showSegmentation, segmentationOpacity, visibleLabels, labelNames = {}, presentLabels = [] } = props;
   const { gradcamHeatmaps, showGradcam = false, gradcamOpacity = [0.6] } = props;
+  const { uncertaintyMap, showUncertainty = false, uncertaintyOpacity = [0.5] } = props;
   const { onAnalyze, analyzing = false, viewMode = 'input', onToggleView, outputDims, allOutputDims = {} } = props;
 
   const [currentSlice, setCurrentSlice] = useState<number[]>([1]);
@@ -101,143 +105,145 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
 
   // Grad-CAM heatmap overlay drawing function
   const drawGradCAM = useCallback((ctx: CanvasRenderingContext2D, dx: number, dy: number, destW: number, destH: number) => {
-    if (!showGradcam || !gradcamHeatmaps) {
-      console.log('Grad-CAM not shown:', { showGradcam, hasHeatmaps: !!gradcamHeatmaps });
-      return;
-    }
+    if (!showGradcam || !gradcamHeatmaps) return;
 
     const sliceIndex = Math.min(Math.max((currentSlice[0] || 1) - 1, 0), Math.max((depth || 1) - 1, 0));
-    const alpha = gradcamOpacity[0] || 0.6;
-    
-    console.log('Drawing Grad-CAM:', { 
-      sliceIndex, 
-      alpha, 
-      heatmapKeys: Object.keys(gradcamHeatmaps),
-      currentSlice: currentSlice[0],
-      depth,
-      canvasSize: { dx, dy, destW, destH }
-    });
-    
-    // Create composite heatmap by combining all class heatmaps
+    const alpha = gradcamOpacity[0] ?? 0.6;
+
     let combinedHeatmap: number[][] | null = null;
     let maxIntensity = 0;
 
-    // Combine all available Grad-CAM heatmaps
-    Object.entries(gradcamHeatmaps).forEach(([className, heatmap]) => {
-      console.log(`Processing ${className}:`, { 
-        hasHeatmap: !!heatmap, 
-        heatmapDepth: heatmap?.length, 
-        sliceIndex,
-        sliceExists: sliceIndex < (heatmap?.length || 0)
-      });
-      
+    Object.values(gradcamHeatmaps).forEach((heatmap) => {
       if (!heatmap || sliceIndex >= heatmap.length) return;
-      
       const slice = heatmap[sliceIndex];
-      if (!slice || !slice[0]) {
-        console.log(`${className} slice ${sliceIndex} is empty or invalid`);
+      if (!slice || !slice.length || !slice[0]?.length) return;
+
+      const sliceHeight = slice.length;
+      const sliceWidth = slice[0].length;
+      if (!combinedHeatmap) {
+        combinedHeatmap = Array.from({ length: sliceHeight }, () => Array(sliceWidth).fill(0));
+      }
+      if (!combinedHeatmap || combinedHeatmap.length !== sliceHeight || combinedHeatmap[0]?.length !== sliceWidth) {
         return;
       }
-
-      const H_grad = slice.length;
-      const W_grad = slice[0].length;
-      
-      console.log(`${className} slice dims:`, { H_grad, W_grad });
-
-      if (!combinedHeatmap) {
-        combinedHeatmap = Array.from({ length: H_grad }, () => Array(W_grad).fill(0));
-      }
-
-      // Add this heatmap to the combined heatmap
-      for (let y = 0; y < H_grad; y++) {
-        for (let x = 0; x < W_grad; x++) {
-          const intensity = slice[y][x] || 0;
-          combinedHeatmap[y][x] += intensity;
-          maxIntensity = Math.max(maxIntensity, combinedHeatmap[y][x]);
+      for (let y = 0; y < sliceHeight; y++) {
+        for (let x = 0; x < sliceWidth; x++) {
+          const value = Number(slice[y]?.[x] ?? 0);
+          combinedHeatmap[y][x] += value;
+          if (combinedHeatmap[y][x] > maxIntensity) {
+            maxIntensity = combinedHeatmap[y][x];
+          }
         }
       }
     });
 
-    console.log('Grad-CAM processing summary:', { 
-      hasCombinedHeatmap: !!combinedHeatmap, 
-      maxIntensity,
-      combinedHeatmapDims: combinedHeatmap ? [combinedHeatmap.length, combinedHeatmap[0]?.length] : null,
-      sampleValues: combinedHeatmap ? [
-        combinedHeatmap[0]?.[0],
-        combinedHeatmap[Math.floor(combinedHeatmap.length/2)]?.[Math.floor(combinedHeatmap[0]?.length/2)],
-        combinedHeatmap[combinedHeatmap.length-1]?.[combinedHeatmap[0]?.length-1]
-      ] : null
-    });
+    if (!combinedHeatmap || maxIntensity <= 0) return;
 
-    if (!combinedHeatmap || maxIntensity === 0) {
-      console.log('No valid Grad-CAM data to render - checking if all values are effectively zero');
-      return;
-    }
-
-    const H_grad = combinedHeatmap.length;
-    const W_grad = combinedHeatmap[0].length;
-    
-    console.log('Rendering heatmap canvas:', { H_grad, W_grad, maxIntensity });
-
-    // Create heatmap canvas with jet colormap
+    const height = combinedHeatmap.length;
+    const width = combinedHeatmap[0].length;
     const heatmapCanvas = document.createElement('canvas');
-    heatmapCanvas.width = W_grad;
-    heatmapCanvas.height = H_grad;
+    heatmapCanvas.width = width;
+    heatmapCanvas.height = height;
     const heatCtx = heatmapCanvas.getContext('2d');
     if (!heatCtx) return;
 
-    const imageData = heatCtx.createImageData(W_grad, H_grad);
-    
-    // Jet colormap function
+    const imageData = heatCtx.createImageData(width, height);
     const getJetColor = (value: number): [number, number, number] => {
-      value = Math.max(0, Math.min(1, value));
-      if (value < 0.25) {
-        return [0, Math.floor(255 * (value / 0.25)), 255];
-      } else if (value < 0.5) {
-        return [0, 255, Math.floor(255 * (1 - (value - 0.25) / 0.25))];
-      } else if (value < 0.75) {
-        return [Math.floor(255 * ((value - 0.5) / 0.25)), 255, 0];
-      } else {
-        return [255, Math.floor(255 * (1 - (value - 0.75) / 0.25)), 0];
-      }
+      const clipped = Math.max(0, Math.min(1, value));
+      if (clipped < 0.25) return [0, Math.floor(255 * (clipped / 0.25)), 255];
+      if (clipped < 0.5) return [0, 255, Math.floor(255 * (1 - (clipped - 0.25) / 0.25))];
+      if (clipped < 0.75) return [Math.floor(255 * ((clipped - 0.5) / 0.25)), 255, 0];
+      return [255, Math.floor(255 * (1 - (clipped - 0.75) / 0.25)), 0];
     };
 
-    // Fill heatmap with jet colormap
-    for (let y = 0; y < H_grad; y++) {
-      for (let x = 0; x < W_grad; x++) {
-        const intensity = combinedHeatmap[y][x] / maxIntensity;
-        const [r, g, b] = getJetColor(intensity);
-        const p = (y * W_grad + x) * 4;
-        
-        // Only draw pixels with significant intensity (very low threshold for maximum visibility)
-        if (intensity > 0.001) {
-          imageData.data[p] = r;
-          imageData.data[p + 1] = g;
-          imageData.data[p + 2] = b;
-          imageData.data[p + 3] = Math.floor(255 * alpha * Math.max(0.3, intensity)); // Minimum alpha for visibility
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const normalized = combinedHeatmap[y][x] / maxIntensity;
+        const [r, g, b] = getJetColor(normalized);
+        const idx = (y * width + x) * 4;
+        if (normalized > 0.001) {
+          imageData.data[idx] = r;
+          imageData.data[idx + 1] = g;
+          imageData.data[idx + 2] = b;
+          imageData.data[idx + 3] = Math.floor(255 * alpha * Math.max(0.3, normalized));
         } else {
-          imageData.data[p + 3] = 0; // Transparent
+          imageData.data[idx + 3] = 0;
         }
       }
     }
 
     heatCtx.putImageData(imageData, 0, 0);
-
-    // Draw heatmap overlay scaled to match the brain image area exactly
     ctx.save();
-    ctx.globalAlpha = alpha; // Apply opacity first
-    ctx.drawImage(heatmapCanvas, 0, 0, W_grad, H_grad, dx, dy, destW, destH);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(heatmapCanvas, 0, 0, width, height, dx, dy, destW, destH);
     ctx.restore();
 
-    // Add legend indicator
-    if (Object.keys(gradcamHeatmaps).length > 0) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.font = '11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial';
-      ctx.fillText(`Grad-CAM: ${Object.keys(gradcamHeatmaps).join(', ')}`, dx + 12, dy + 24);
-      ctx.restore();
+    if (import.meta.env.DEV) {
+      console.debug('Grad-CAM overlay drawn', { sliceIndex, keys: Object.keys(gradcamHeatmaps) });
     }
   }, [showGradcam, gradcamHeatmaps, gradcamOpacity, currentSlice, depth]);
+
+  const drawUncertainty = useCallback((ctx: CanvasRenderingContext2D, dx: number, dy: number, destW: number, destH: number) => {
+    if (!showUncertainty || !uncertaintyMap) return;
+    const depthSlices = uncertaintyMap.length;
+    if (!depthSlices) return;
+
+    const sliceIndex = Math.min(Math.max((currentSlice[0] || 1) - 1, 0), depthSlices - 1);
+    const slice = uncertaintyMap[sliceIndex];
+    if (!slice || !slice[0]) return;
+
+    const height = slice.length;
+    const width = slice[0].length;
+    if (!height || !width) return;
+
+    let localMin = Number.POSITIVE_INFINITY;
+    let localMax = Number.NEGATIVE_INFINITY;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const val = Number(slice[y]?.[x]);
+        if (!Number.isFinite(val)) continue;
+        if (val < localMin) localMin = val;
+        if (val > localMax) localMax = val;
+      }
+    }
+
+    if (!Number.isFinite(localMin) || !Number.isFinite(localMax) || localMax <= localMin) {
+      return;
+    }
+
+    const alpha = uncertaintyOpacity[0] ?? 0.5;
+    const heatCanvas = document.createElement('canvas');
+    heatCanvas.width = width;
+    heatCanvas.height = height;
+    const heatCtx = heatCanvas.getContext('2d');
+    if (!heatCtx) return;
+
+    const imageData = heatCtx.createImageData(width, height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const raw = Number(slice[y]?.[x] ?? 0);
+        if (!Number.isFinite(raw)) continue;
+        let normalized = (raw - localMin) / (localMax - localMin);
+        if (!Number.isFinite(normalized)) normalized = 0;
+        normalized = Math.max(0, Math.min(1, normalized));
+        const idx = (y * width + x) * 4;
+        const intensity = normalized ** 0.55; // keep subtle gradients but boost hotspots
+        const r = 255;
+        const g = Math.floor(140 * (1 - intensity));
+        const b = Math.floor(32 * (1 - intensity));
+        imageData.data[idx] = r;
+        imageData.data[idx + 1] = g;
+        imageData.data[idx + 2] = b;
+        imageData.data[idx + 3] = Math.floor(255 * alpha * intensity);
+      }
+    }
+
+    heatCtx.putImageData(imageData, 0, 0);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.drawImage(heatCanvas, 0, 0, width, height, dx, dy, destW, destH);
+    ctx.restore();
+  }, [showUncertainty, uncertaintyMap, uncertaintyOpacity, currentSlice]);
 
   // Refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -282,11 +288,19 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
     if (oc) {
       // @ts-ignore
       oc.imageSmoothingEnabled = false; oc.imageSmoothingQuality = 'high'; oc.putImageData(imgData, 0, 0);
-      const scale = Math.min(displayW / w, displayH / h); const destW = Math.max(1, Math.floor(w * scale)); const destH = Math.max(1, Math.floor(h * scale));
-      const dx = Math.floor((displayW - destW) / 2); const dy = Math.floor((displayH - destH) / 2);
-      ctx.clearRect(0, 0, displayW, displayH); ctx.drawImage(off, 0, 0, w, h, dx, dy, destW, destH);
+      const scale = Math.min(displayW / w, displayH / h);
+      const destW = Math.max(1, Math.floor(w * scale));
+      const destH = Math.max(1, Math.floor(h * scale));
+      const dx = Math.floor((displayW - destW) / 2);
+      const dy = Math.floor((displayH - destH) / 2);
+      ctx.clearRect(0, 0, displayW, displayH);
+      ctx.drawImage(off, 0, 0, w, h, dx, dy, destW, destH);
+      if (destW > 0 && destH > 0) {
+        drawGradCAM(ctx, dx, dy, destW, destH);
+        drawUncertainty(ctx, dx, dy, destW, destH);
+      }
     }
-  }, [isNifti, imageData, width, height, depth, currentSlice, modality, outputOnlyRaw]);
+  }, [isNifti, imageData, width, height, depth, currentSlice, modality, outputOnlyRaw, drawGradCAM, drawUncertainty]);
 
   // Output rendering: draw base grayscale slice and segmentation overlay (output-only view)
   useEffect(() => {
@@ -439,6 +453,9 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
     // Draw Grad-CAM heatmaps on top of segmentation
     drawGradCAM(ctx, dx, dy, destW, destH);
 
+  // Draw uncertainty overlay if enabled
+  drawUncertainty(ctx, dx, dy, destW, destH);
+
     // Friendly hint when a slice has no labels
     if (!anyLabel) {
       ctx.save();
@@ -447,7 +464,7 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
       ctx.fillText('No segmented voxels on this slice', dx + 12, dy + destH - 12);
       ctx.restore();
     }
-  }, [outputOnlyRaw, segmentation, segmentationOpacity, currentSlice, isNifti, imageData, width, height, depth, drawGradCAM]);
+  }, [outputOnlyRaw, segmentation, segmentationOpacity, currentSlice, isNifti, imageData, width, height, depth, drawGradCAM, drawUncertainty]);
 
 
 
@@ -543,8 +560,8 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
             </div>
             <div className="absolute bottom-4 right-4 text-white text-xs bg-black/50 px-2 py-1 rounded">{viewMode === 'input' ? 'Axial View' : 'Output view'}</div>
             {viewMode === 'output' && showSegmentation && (
-              <div className="absolute top-4 right-4 bg-black/60 text-white text-xs px-2 py-2 rounded-md shadow space-y-1">
-                <div className="font-semibold">Legend</div>
+              <div className="absolute bottom-20 left-4 bg-black/60 text-white text-xs px-2 py-2 rounded-md shadow space-y-1 max-w-[180px]">
+                <div className="font-semibold text-[11px]">Legend</div>
                 <div className="flex flex-col gap-1">
                   {[1,2,4]
                     .filter((l) => presentLabels.includes(l) || (l === 4 && presentLabels.includes(3)))
@@ -557,17 +574,23 @@ export const MedicalViewer = (props: MedicalViewerProps) => {
                       const swatch = lab === 1 ? 'rgb(25,118,210)' : lab === 2 ? 'rgb(56,142,60)' : 'rgb(211,47,47)';
                       const labelText = names[lab] || `Label ${lab}`; // enforce canonical BraTS names in 2D legend
                       return (
-                        <div key={lab} className="flex items-center gap-2">
-                          <div className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: swatch }} />
-                          <span>{labelText} ({lab})</span>
+                        <div key={lab} className="flex items-center gap-2 leading-tight">
+                          <div className="w-2.5 h-2.5 rounded-sm border border-white/30" style={{ backgroundColor: swatch }} />
+                          <span className="text-[11px]">{labelText} ({lab})</span>
                         </div>
                       );
                     })}
                 </div>
                 {showGradcam && gradcamHeatmaps && (
                   <div className="border-t border-white/20 pt-1 mt-1">
-                    <div className="font-semibold text-yellow-300">Explainability</div>
-                    <div className="text-xs opacity-80">Grad-CAM heatmaps active</div>
+                    <div className="font-semibold text-yellow-300 text-[11px]">Explainability</div>
+                    <div className="text-[10px] opacity-80">Grad-CAM heatmaps active</div>
+                  </div>
+                )}
+                {showUncertainty && uncertaintyMap && (
+                  <div className="border-t border-white/20 pt-1 mt-1">
+                    <div className="font-semibold text-orange-300 text-[11px]">Uncertainty</div>
+                    <div className="text-[10px] opacity-80">Warm colors = lower confidence</div>
                   </div>
                 )}
               </div>

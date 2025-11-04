@@ -1,0 +1,15 @@
+{
+  "name": "NeuroInsight AI",
+  "short_name": "NeuroInsight",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/fevicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml"
+    }
+  ]
+}

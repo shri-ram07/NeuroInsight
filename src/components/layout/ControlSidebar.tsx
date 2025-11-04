@@ -30,6 +30,11 @@ interface ControlSidebarProps {
   setShowGradcam?: (v: boolean) => void;
   gradcamOpacity?: number[];
   setGradcamOpacity?: (v: number[]) => void;
+  uncertaintyMap?: number[][][] | null;
+  showUncertainty?: boolean;
+  setShowUncertainty?: (v: boolean) => void;
+  uncertaintyOpacity?: number[];
+  setUncertaintyOpacity?: (v: number[]) => void;
 }
 
 export const ControlSidebar = ({
@@ -54,6 +59,11 @@ export const ControlSidebar = ({
   setShowGradcam,
   gradcamOpacity = [0.6],
   setGradcamOpacity,
+  uncertaintyMap,
+  showUncertainty = false,
+  setShowUncertainty,
+  uncertaintyOpacity = [0.5],
+  setUncertaintyOpacity,
 }: ControlSidebarProps) => {
   const [show3DViewer, setShow3DViewer] = useState(false);
 
@@ -63,6 +73,13 @@ export const ControlSidebar = ({
     { name: "T2", color: "bg-yellow-500" },
     { name: "FLAIR", color: "bg-purple-500" },
   ];
+
+  const gradcamColorMap: Record<string, string> = {
+    necrotic: 'rgb(255,193,7)',
+    edema: 'rgb(255,152,0)',
+    enhancing: 'rgb(244,67,54)',
+    focus: 'rgb(255,152,0)',
+  };
 
   return (
     <>
@@ -220,29 +237,50 @@ export const ControlSidebar = ({
                       className="w-full"
                     />
                   </div>
-                  
+
                   <div className="flex flex-col gap-2 pt-1">
                     <div className="text-xs font-medium text-muted-foreground mb-1">ROI Heatmaps:</div>
-                    {gradcamHeatmaps.necrotic && (
-                      <Badge variant="outline" className="text-xs justify-start">
-                        <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: 'rgb(255,193,7)' }} />
-                        Necrotic Focus
-                      </Badge>
-                    )}
-                    {gradcamHeatmaps.edema && (
-                      <Badge variant="outline" className="text-xs justify-start">
-                        <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: 'rgb(255,152,0)' }} />
-                        Edema Focus
-                      </Badge>
-                    )}
-                    {gradcamHeatmaps.enhancing && (
-                      <Badge variant="outline" className="text-xs justify-start">
-                        <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: 'rgb(244,67,54)' }} />
-                        Enhancing Focus
-                      </Badge>
-                    )}
+                    {Object.keys(gradcamHeatmaps).map((key) => {
+                      const swatchColor = gradcamColorMap[key] || 'rgb(255,152,0)';
+                      const label = key.replace(/_/g, ' ');
+                      return (
+                        <Badge key={key} variant="outline" className="text-xs justify-start">
+                          <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: swatchColor }} />
+                          {label}
+                        </Badge>
+                      );
+                    })}
                   </div>
                 </>
+              )}
+            </div>
+          )}
+
+          {explainabilityMode && uncertaintyMap && (
+            <div className="space-y-3 pl-6">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Show Uncertainty</Label>
+                <Switch
+                  checked={showUncertainty}
+                  onCheckedChange={(value) => setShowUncertainty && setShowUncertainty(value)}
+                />
+              </div>
+
+              {showUncertainty && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">Overlay Intensity</Label>
+                  <Slider
+                    value={uncertaintyOpacity}
+                    onValueChange={(v) => setUncertaintyOpacity && setUncertaintyOpacity(v)}
+                    max={1}
+                    min={0}
+                    step={0.1}
+                    className="w-full"
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Highlights voxels with lower model confidence (warm colors = higher uncertainty).
+                  </div>
+                </div>
               )}
             </div>
           )}
